@@ -40,6 +40,12 @@ enum TaskType {
   SCHEDULED
 }
 
+enum AgentMode {
+  DESKTOP_AUTOMATION
+  CODE_GENERATION
+  HYBRID
+}
+
 model Task {
   id            String        @id @default(uuid())
   description   String
@@ -56,12 +62,17 @@ model Task {
   queuedAt      DateTime?
   error         String?
   result        Json?
-  // Example: 
+  // Example:
   // { "provider": "anthropic", "name": "claude-opus-4-20250514", "title": "Claude Opus 4" }
   model         Json
   messages      Message[]
   summaries     Summary[]
   files         File[]
+
+  // BT1ZAR fields
+  mode          AgentMode?    // Execution mode: desktop_automation, code_generation, hybrid
+  projectRoot   String?       // Project root for code operations
+  runId         String?       // Workflow run ID for bt1zar tasks
 }
 
 model Summary {

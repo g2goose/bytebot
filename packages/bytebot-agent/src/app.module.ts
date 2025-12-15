@@ -13,6 +13,8 @@ import { ScheduleModule } from '@nestjs/schedule';
 import { EventEmitterModule } from '@nestjs/event-emitter';
 import { SummariesModule } from './summaries/summaries.modue';
 import { ProxyModule } from './proxy/proxy.module';
+// BT1ZAR module - uncomment when package is built
+// import { BT1zarModule } from '@bytebot/bt1zar';
 
 @Module({
   imports: [
@@ -30,6 +32,8 @@ import { ProxyModule } from './proxy/proxy.module';
     GoogleModule,
     ProxyModule,
     PrismaModule,
+    // BT1ZAR module for code generation and analysis
+    // BT1zarModule,
   ],
   controllers: [AppController],
   providers: [AppService],
