@@ -1,0 +1,736 @@
+---
+title: "Distroless Troubleshooting"
+description: "Comprehensive guide for debugging and troubleshooting distroless Bytebot containers"
+---
+
+# Distroless Container Troubleshooting
+
+This guide helps you debug and troubleshoot Bytebot's distroless containers. All application services (bytebot-agent, bytebot-ui, python-sidecar, bytebot-agent-cc) use Google's [distroless](https://github.com/GoogleContainerTools/distroless) base images for enhanced security.
+
+## Understanding Distroless
+
+### What is Distroless?
+
+Distroless containers contain only your application and its runtime dependencies - nothing else:
+
+- ❌ No shell (`/bin/sh`, `/bin/bash`)
+- ❌ No package managers (`apt`, `apk`, `yum`)
+- ❌ No debugging tools (`ps`, `top`, `netstat`)
+- ❌ No text editors (`vi`, `nano`)
+- ✅ Only the application runtime (Node.js, Python)
+- ✅ Only the application code and dependencies
+
+### Why Distroless?
+
+**Security Benefits:**
+- **Minimal Attack Surface**: No shell means no shell-based attacks
+- **Reduced CVEs**: Fewer packages = fewer vulnerabilities
+- **Immutable Runtime**: No tools to modify running containers
+- **Non-Root Execution**: All services run as UID 65532
+
+**Operational Benefits:**
+- **Smaller Images**: 25-35% size reduction
+- **Faster Deployments**: Less to download and extract
+- **Better Caching**: Fewer layers to rebuild
+
+## Debugging Without Shell Access
+
+### Core Principle
+
+**You cannot `docker exec` into distroless containers.**
+
+```bash
+# ❌ This will fail
+docker exec -it bytebot-agent sh
+docker exec -it bytebot-agent /bin/bash
+
+# Error: OCI runtime exec failed: exec failed: unable to start container process: exec: "sh": executable file not found in $PATH
+```
+
+This is **intentional** and a **security feature**, not a bug.
+
+### Alternative Debugging Methods
+
+<Tabs>
+  <Tab title="Docker Compose">
+    ## Viewing Logs
+
+    ```bash
+    # All services
+    docker-compose -f docker/docker-compose.yml logs -f
+
+    # Specific service
+    docker-compose -f docker/docker-compose.yml logs -f bytebot-agent
+    docker-compose -f docker/docker-compose.yml logs -f bytebot-ui
+    docker-compose -f docker/docker-compose.yml logs -f python-sidecar
+
+    # Last 100 lines
+    docker-compose -f docker/docker-compose.yml logs --tail=100 bytebot-agent
+
+    # Since specific time
+    docker-compose -f docker/docker-compose.yml logs --since 30m bytebot-agent
+    ```
+
+    ## Checking Service Status
+
+    ```bash
+    # List all services
+    docker-compose -f docker/docker-compose.yml ps
+
+    # Check health status
+    docker-compose -f docker/docker-compose.yml ps | grep bytebot-agent
+
+    # Inspect container
+    docker inspect bytebot-agent
+    ```
+
+    ## Viewing Running Processes
+
+    ```bash
+    # See what's running inside the container
+    docker top bytebot-agent
+
+    # Detailed process view
+    docker top bytebot-agent aux
+    ```
+
+    ## Testing Connectivity
+
+    ```bash
+    # Test agent API
+    curl http://localhost:9991/health
+
+    # Test UI
+    curl http://localhost:9992/
+
+    # Test python-sidecar
+    curl http://localhost:8766/health
+    ```
+
+    ## Examining Container Details
+
+    ```bash
+    # Full container configuration
+    docker inspect bytebot-agent
+
+    # Environment variables
+    docker inspect bytebot-agent | jq '.[0].Config.Env'
+
+    # Network settings
+    docker inspect bytebot-agent | jq '.[0].NetworkSettings'
+
+    # Resource limits
+    docker inspect bytebot-agent | jq '.[0].HostConfig.Memory'
+    ```
+
+    ## Copying Files Out
+
+    ```bash
+    # Extract logs or config files
+    docker cp bytebot-agent:/app/package.json ./package.json
+
+    # Copy entire directory
+    docker cp bytebot-agent:/app/dist ./dist-debug
+    ```
+  </Tab>
+
+  <Tab title="Kubernetes">
+    ## Viewing Logs
+
+    ```bash
+    # Current logs
+    kubectl logs -n bytebot deployment/bytebot-agent
+
+    # Follow logs
+    kubectl logs -n bytebot -f deployment/bytebot-agent
+
+    # Previous crashed container
+    kubectl logs -n bytebot deployment/bytebot-agent --previous
+
+    # Specific container in multi-container pod
+    kubectl logs -n bytebot <pod-name> -c bytebot-agent
+
+    # All containers in pod
+    kubectl logs -n bytebot <pod-name> --all-containers=true
+    ```
+
+    ## Checking Pod Status
+
+    ```bash
+    # List pods
+    kubectl get pods -n bytebot
+
+    # Detailed pod info
+    kubectl describe pod -n bytebot <pod-name>
+
+    # Watch pod status
+    kubectl get pods -n bytebot -w
+    ```
+
+    ## Using Debug Containers (Kubernetes 1.23+)
+
+    The best way to debug distroless containers in Kubernetes:
+
+    ```bash
+    # Attach a debug container to running pod
+    kubectl debug -it -n bytebot bytebot-agent-xxxxx \
+      --image=busybox \
+      --target=bytebot-agent
+
+    # Now you have a shell in the same process namespace
+    # You can run ps, ls, etc.
+    ```
+
+    **What you can do in debug container:**
+    - View processes: `ps aux`
+    - Check listening ports: `netstat -tlnp`
+    - View filesystem: `ls -la /proc/1/root/app`
+    - Inspect environment: `cat /proc/1/environ | tr '\0' '\n'`
+
+    ## Testing Connectivity
+
+    ```bash
+    # Port-forward to local machine
+    kubectl port-forward -n bytebot deployment/bytebot-agent 9991:9991
+
+    # Then test locally
+    curl http://localhost:9991/health
+
+    # Or exec a network test
+    kubectl run -it --rm debug -n bytebot \
+      --image=nicolaka/netshoot \
+      --restart=Never -- curl http://bytebot-agent:9991/health
+    ```
+
+    ## Examining Pod Details
+
+    ```bash
+    # Get pod YAML
+    kubectl get pod -n bytebot <pod-name> -o yaml
+
+    # Get environment variables
+    kubectl get pod -n bytebot <pod-name> -o json | jq '.spec.containers[0].env'
+
+    # Get resource usage
+    kubectl top pod -n bytebot <pod-name>
+
+    # Get events
+    kubectl get events -n bytebot --field-selector involvedObject.name=<pod-name>
+    ```
+  </Tab>
+</Tabs>
+
+## Common Issues and Solutions
+
+### Issue: "Cannot exec into container"
+
+**Symptom:**
+```bash
+docker exec -it bytebot-agent sh
+# Error: exec: "sh": executable file not found in $PATH
+```
+
+**Solution:**
+This is expected behavior with distroless images. Use alternative methods:
+
+1. **View logs**: `docker-compose logs -f bytebot-agent`
+2. **Check processes**: `docker top bytebot-agent`
+3. **Test API**: `curl http://localhost:9991/health`
+4. **(Kubernetes)** Use debug containers: `kubectl debug`
+
+### Issue: "Migrations not running"
+
+**Symptom:**
+- Agent fails to start
+- Database schema errors in logs
+- Init container shows failed status
+
+**Docker Compose Solution:**
+
+```bash
+# Check migration logs
+docker-compose -f docker/docker-compose.yml logs bytebot-agent-migrations
+
+# Check if postgres is healthy
+docker-compose -f docker/docker-compose.yml ps postgres
+
+# Ensure postgres started before migrations
+# migrations depend on postgres health check
+
+# Force recreation of migration service
+docker-compose -f docker/docker-compose.yml up -d --force-recreate bytebot-agent-migrations
+```
+
+**Kubernetes Solution:**
+
+```bash
+# Check init container status
+kubectl get pods -n bytebot -l app.kubernetes.io/name=bytebot-agent
+
+# View migration logs
+kubectl logs -n bytebot <pod-name> -c migrations
+
+# If init failed, describe pod for details
+kubectl describe pod -n bytebot <pod-name>
+
+# Common fixes:
+# 1. Check DATABASE_URL is correct
+# 2. Verify database is accessible
+# 3. Check database user has CREATE permissions
+```
+
+### Issue: "Container crashes immediately"
+
+**Symptom:**
+- Container starts and stops immediately
+- No obvious error in logs
+- Exit code 1 or 127
+
+**Diagnostic Steps:**
+
+```bash
+# 1. Check exit code
+docker inspect bytebot-agent | jq '.[0].State.ExitCode'
+
+# 2. View all logs (including startup)
+docker logs bytebot-agent
+
+# 3. Check environment variables are set
+docker inspect bytebot-agent | jq '.[0].Config.Env'
+
+# 4. Verify image built correctly
+docker history ghcr.io/bytebot-ai/bytebot-agent:edge
+
+# 5. Test with docker run to see startup errors
+docker run --rm -it \
+  -e DATABASE_URL=postgresql://user:pass@localhost:5432/db \
+  -e ANTHROPIC_API_KEY=your_key \
+  ghcr.io/bytebot-ai/bytebot-agent:edge
+```
+
+**Common Causes:**
+- Missing required environment variables (DATABASE_URL, API keys)
+- Database not accessible
+- Port already in use
+- File permission issues (should not happen with nonroot user)
+
+### Issue: "Unable to find node_modules or dependencies"
+
+**Symptom:**
+```
+Error: Cannot find module 'express'
+Error: Cannot find module '@bytebot/shared'
+```
+
+**Cause:**
+The multi-stage build didn't copy dependencies correctly.
+
+**Solution:**
+Rebuild images:
+
+```bash
+# Docker Compose
+docker-compose -f docker/docker-compose.yml build --no-cache bytebot-agent
+docker-compose -f docker/docker-compose.yml up -d bytebot-agent
+
+# Docker
+docker build --no-cache -f packages/bytebot-agent/Dockerfile -t bytebot-agent packages/
+```
+
+**Verify build includes node_modules:**
+
+```bash
+# List files in image
+docker run --rm ghcr.io/bytebot-ai/bytebot-agent:edge \
+  ls -la /app/node_modules/express
+```
+
+### Issue: "Python import errors in python-sidecar"
+
+**Symptom:**
+```
+ModuleNotFoundError: No module named 'fastapi'
+ModuleNotFoundError: No module named 'uvicorn'
+```
+
+**Cause:**
+Python packages not copied to correct location in distroless image.
+
+**Solution:**
+
+```bash
+# Check if packages exist
+docker run --rm ghcr.io/bytebot-ai/python-sidecar:edge \
+  ls -la /usr/local/lib/python3.11/site-packages/
+
+# Rebuild with fresh cache
+docker build --no-cache -f packages/python-sidecar/Dockerfile packages/
+
+# Verify Python path
+docker inspect python-sidecar | jq '.[0].Config.Env' | grep PYTHON
+```
+
+### Issue: "Health checks failing"
+
+**Symptom:**
+- Kubernetes probes failing
+- Services marked unhealthy
+- Container restarts frequently
+
+**Understanding:**
+Distroless images don't include `wget` or `curl` for health checks. Kubernetes should use HTTP probes instead.
+
+**Docker Compose:**
+Docker HEALTHCHECK directives have been removed. Check service status with:
+
+```bash
+# Test endpoints directly
+curl http://localhost:9991/health  # Agent
+curl http://localhost:9992/        # UI
+curl http://localhost:8766/health  # Python sidecar
+```
+
+**Kubernetes:**
+Ensure HTTP probes are configured:
+
+```yaml
+# Should be in Helm values or deployment
+livenessProbe:
+  httpGet:
+    path: /health
+    port: 9991
+  initialDelaySeconds: 30
+  periodSeconds: 10
+
+readinessProbe:
+  httpGet:
+    path: /health
+    port: 9991
+  initialDelaySeconds: 5
+  periodSeconds: 5
+```
+
+### Issue: "Cannot modify files at runtime"
+
+**Symptom:**
+- Application tries to write config files
+- Cannot create temporary files in `/tmp`
+- Permission denied errors
+
+**Cause:**
+Distroless images are designed to be immutable. The nonroot user (UID 65532) has limited write access.
+
+**Solution:**
+
+For legitimate write operations, ensure your application writes to allowed locations:
+
+```javascript
+// ✅ GOOD - Use writable directories
+const tmpDir = '/tmp/myapp';  // /tmp is writable
+const dataDir = '/app/data';  // If mounted as volume
+
+// ❌ BAD - Root directories are read-only
+const configFile = '/etc/myapp/config.json';  // Not writable
+```
+
+**Docker Compose - Mount volumes for writable data:**
+
+```yaml
+bytebot-agent:
+  volumes:
+    - agent-data:/app/data  # Writable volume
+```
+
+**Kubernetes - Use emptyDir or PVC:**
+
+```yaml
+volumes:
+  - name: tmp-data
+    emptyDir: {}
+volumeMounts:
+  - name: tmp-data
+    mountPath: /tmp
+```
+
+## Service-Specific Troubleshooting
+
+### bytebot-agent
+
+**Architecture:**
+- 3-stage build: shared → bt1zar → agent
+- Prisma client generated at build time
+- Migrations in separate init container
+
+**Common Issues:**
+
+```bash
+# Issue: "Prisma Client not found"
+# Solution: Rebuild image, ensure `npx prisma generate` ran in builder
+
+# Issue: "Cannot connect to database"
+# Check: DATABASE_URL environment variable
+docker-compose logs bytebot-agent | grep DATABASE_URL
+
+# Issue: "Migration failed"
+# Check: Init container logs
+docker-compose logs bytebot-agent-migrations
+
+# Issue: "Module not found: @bytebot/shared"
+# Cause: Shared module not built/copied
+# Solution: Rebuild with --no-cache
+```
+
+### bytebot-ui
+
+**Architecture:**
+- Next.js with custom Express server
+- server.ts pre-compiled to server.js with esbuild
+- WebSocket proxy for desktop VNC
+
+**Common Issues:**
+
+```bash
+# Issue: "Cannot start server.js"
+# Check: esbuild compiled correctly
+docker run --rm bytebot-ui ls -la /app/server.js
+
+# Issue: "Module not found: next"
+# Cause: esbuild externals missing
+# Check: Build includes external dependencies
+docker run --rm bytebot-ui ls /app/node_modules/next
+
+# Issue: "WebSocket proxy not working"
+# Check: BYTEBOT_DESKTOP_VNC_URL environment variable
+docker inspect bytebot-ui | jq '.[0].Config.Env' | grep VNC_URL
+```
+
+### python-sidecar
+
+**Architecture:**
+- 2-stage build: builder → distroless/python3
+- FastAPI application
+- Python packages in site-packages
+
+**Common Issues:**
+
+```bash
+# Issue: "Module not found"
+# Solution: Check site-packages copied correctly
+docker run --rm python-sidecar ls /usr/local/lib/python3.11/site-packages/
+
+# Issue: "Cannot start uvicorn"
+# Check: CMD is correct
+docker inspect python-sidecar | jq '.[0].Config.Cmd'
+
+# Issue: "Port 8766 not accessible"
+# Check: Container is listening
+docker top python-sidecar
+curl http://localhost:8766/health
+```
+
+### bytebot-agent-cc
+
+**Architecture:**
+- Similar to bytebot-agent but without migrations
+- Claude Code variant
+- Shared module dependency
+
+**Common Issues:**
+
+```bash
+# Issue: "Shared module not found"
+# Solution: Ensure multi-module build works
+docker run --rm bytebot-agent-cc ls /app/shared/
+
+# Issue: "Cannot start"
+# Check: No migration dependencies (unlike bytebot-agent)
+docker-compose logs bytebot-agent-cc
+```
+
+## Performance Considerations
+
+### Image Size Analysis
+
+```bash
+# Compare image sizes
+docker images | grep bytebot
+
+# Analyze layers
+docker history ghcr.io/bytebot-ai/bytebot-agent:edge
+
+# Check uncompressed size
+docker inspect ghcr.io/bytebot-ai/bytebot-agent:edge | jq '.[0].Size'
+```
+
+### Build Optimization
+
+```bash
+# Use BuildKit for better caching
+DOCKER_BUILDKIT=1 docker-compose build
+
+# Multi-platform builds (CI/CD)
+docker buildx build \
+  --platform linux/amd64,linux/arm64 \
+  -f packages/bytebot-agent/Dockerfile \
+  packages/
+
+# Layer caching in CI
+# GitHub Actions caching is already configured in workflows
+```
+
+### Runtime Performance
+
+Distroless images typically have **better** runtime performance:
+
+- Faster startup (less to initialize)
+- Lower memory overhead (fewer processes)
+- Better CPU cache usage (smaller binary footprint)
+
+## Security Best Practices
+
+### Verifying Nonroot Execution
+
+```bash
+# Docker Compose
+docker top bytebot-agent
+# Look for UID 65532
+
+# Kubernetes
+kubectl exec -n bytebot <pod-name> -- id
+# Should show uid=65532(nonroot) gid=65532(nonroot)
+```
+
+### Scanning for Vulnerabilities
+
+```bash
+# Trivy scan
+trivy image ghcr.io/bytebot-ai/bytebot-agent:edge
+
+# Grype scan
+grype ghcr.io/bytebot-ai/bytebot-agent:edge
+
+# Expect significantly fewer CVEs than standard base images
+```
+
+### Read-Only Filesystem
+
+For maximum security, run with read-only root filesystem:
+
+**Docker Compose:**
+```yaml
+bytebot-agent:
+  read_only: true
+  tmpfs:
+    - /tmp
+```
+
+**Kubernetes:**
+```yaml
+securityContext:
+  readOnlyRootFilesystem: true
+```
+
+## Advanced Debugging
+
+### Recreating the Build Locally
+
+```bash
+# Exact build commands from CI
+cd bytebot
+
+# Agent
+docker build \
+  -f packages/bytebot-agent/Dockerfile \
+  --target runtime \
+  -t bytebot-agent:local \
+  packages/
+
+# Migrations
+docker build \
+  -f packages/bytebot-agent/Dockerfile \
+  --target migration-runner \
+  -t bytebot-agent-migrations:local \
+  packages/
+
+# Test locally built image
+docker run --rm \
+  -e DATABASE_URL=postgresql://postgres:password@host.docker.internal:5432/bytebot \
+  -e ANTHROPIC_API_KEY=your_key \
+  -p 9991:9991 \
+  bytebot-agent:local
+```
+
+### Extracting the Full Filesystem
+
+```bash
+# Export container filesystem
+docker create --name temp-extract bytebot-agent:local
+docker export temp-extract -o bytebot-agent-fs.tar
+docker rm temp-extract
+
+# Extract and explore
+mkdir bytebot-agent-fs
+tar -xf bytebot-agent-fs.tar -C bytebot-agent-fs
+cd bytebot-agent-fs
+
+# Now you can explore the full filesystem
+ls -la app/
+ls -la usr/local/lib/node_modules/
+```
+
+### Building Debug Variant
+
+For development, you can create a debug variant:
+
+```dockerfile
+# Add to Dockerfile after distroless stage
+FROM runtime AS debug
+USER root
+RUN apt-get update && apt-get install -y bash curl
+USER nonroot
+```
+
+Then build and use:
+```bash
+docker build --target debug -t bytebot-agent:debug packages/
+docker exec -it bytebot-agent-debug bash
+```
+
+**⚠️ Never use debug variant in production!**
+
+## Getting Help
+
+If you're still stuck:
+
+1. **Check logs carefully** - Most issues show up in logs
+2. **Search GitHub Issues** - Someone likely hit this before
+3. **Discord Community** - [Join our Discord](https://discord.com/invite/d9ewZkWPTP)
+4. **Create GitHub Issue** - [Report bugs](https://github.com/bytebot-ai/bytebot/issues)
+
+Include in bug reports:
+- Docker/Kubernetes version
+- Platform (Linux/Mac/Windows)
+- Complete logs (`docker-compose logs` or `kubectl logs`)
+- Environment variables (redact secrets!)
+- Output of `docker inspect <container>`
+
+## Summary
+
+**Key Takeaways:**
+
+✅ **DO:**
+- Use logs for debugging (`docker-compose logs`, `kubectl logs`)
+- Test APIs with curl/wget from host
+- Use `docker top` to see processes
+- Use Kubernetes debug containers
+- Check init container logs for migrations
+- Verify environment variables
+
+❌ **DON'T:**
+- Try to `docker exec -it` with shell
+- Expect health checks with wget/curl in containers
+- Try to install packages at runtime
+- Run migrations from application (use init containers)
+- Bypass distroless security for convenience
+
+**Remember**: Distroless is a security feature, not a limitation. These constraints make your deployment more secure and production-ready.

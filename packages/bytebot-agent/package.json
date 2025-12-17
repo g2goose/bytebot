@@ -23,6 +23,7 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.39.0",
+    "@bytebot/bt1zar": "../bt1zar",
     "@bytebot/shared": "../shared",
     "@google/genai": "^1.8.0",
     "@nestjs/common": "^11.0.1",

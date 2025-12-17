@@ -49,15 +49,23 @@ Get your self-hosted AI desktop agent running with just three commands:
 
 <Steps>
   <Step title="Clone and Configure">
-    ```bash 
+    ```bash
     git clone https://github.com/bytebot-ai/bytebot.git
     cd bytebot
-    
-    # Configure your AI provider (choose one):
-    echo "ANTHROPIC_API_KEY=your_api_key_here" > docker/.env    # For Claude
-    # echo "OPENAI_API_KEY=your_api_key_here" > docker/.env     # For OpenAI
-    # echo "GEMINI_API_KEY=your_api_key_here" > docker/.env     # For Gemini
+
+    # Create environment configuration (required)
+    cat > docker/.env << EOF
+    POSTGRES_PASSWORD=your_secure_password_here
+    # Choose one AI provider:
+    ANTHROPIC_API_KEY=your_api_key_here    # For Claude
+    # OPENAI_API_KEY=your_api_key_here     # For OpenAI
+    # GEMINI_API_KEY=your_api_key_here     # For Gemini
+    EOF
     ```
+
+    <Note>
+      **Required**: You must set `POSTGRES_PASSWORD` for database security.
+    </Note>
   </Step>
 
 <Step title="Start the Agent Stack">
@@ -129,6 +137,78 @@ You now have a complete AI desktop automation system with:
     - MCP protocol support
   </Card>
 </CardGroup>
+
+## 🔒 Security: Distroless Deployment
+
+All Bytebot application services (agent, UI, python-sidecar) use Google's [distroless](https://github.com/GoogleContainerTools/distroless) container images for enhanced security:
+
+<CardGroup cols={2}>
+  <Card title="Minimal Attack Surface" icon="shield">
+    Images contain only the application and runtime - no shells, package managers, or unnecessary binaries
+  </Card>
+  <Card title="Non-Root Execution" icon="user-lock">
+    All services run as non-root user (UID 65532) with restricted permissions
+  </Card>
+  <Card title="Reduced Vulnerabilities" icon="bug-slash">
+    Fewer packages means fewer CVEs and security patches needed
+  </Card>
+  <Card title="Smaller Images" icon="compress">
+    25-35% size reduction compared to standard base images
+  </Card>
+</CardGroup>
+
+### What This Means for You
+
+<AccordionGroup>
+  <Accordion title="No Shell Access">
+    You cannot use `docker exec -it bytebot-agent sh` to access containers. This is intentional for security.
+
+    **Debugging without shell access:**
+    ```bash
+    # View logs instead
+    docker-compose -f docker/docker-compose.yml logs -f bytebot-agent
+
+    # Inspect running processes
+    docker top bytebot-agent
+
+    # Check container details
+    docker inspect bytebot-agent
+
+    # For advanced debugging, use a debug container (Kubernetes)
+    kubectl debug -it bytebot-agent --image=busybox --target=bytebot-agent
+    ```
+  </Accordion>
+
+  <Accordion title="Health Monitoring">
+    Docker HEALTHCHECK directives are removed from distroless images. Instead:
+
+    - **Docker Compose**: Use `docker-compose ps` to check service status
+    - **Kubernetes**: Configure liveness/readiness probes in your deployment
+    - **Production**: Use orchestration platform health monitoring
+
+    Services expose health endpoints:
+    - Agent: `http://localhost:9991/health`
+    - UI: `http://localhost:9992/` (Next.js built-in)
+  </Accordion>
+
+  <Accordion title="Database Migrations">
+    Prisma database migrations run in a separate init container before the agent starts:
+
+    ```bash
+    # View migration logs
+    docker-compose -f docker/docker-compose.yml logs bytebot-agent-migrations
+
+    # Migrations must complete successfully before the agent starts
+    # This ensures database schema is always up-to-date
+    ```
+
+    The application has no migration tooling at runtime - this is a security feature.
+  </Accordion>
+</AccordionGroup>
+
+<Note>
+  **Production Ready**: These security measures make Bytebot suitable for handling sensitive data in production environments. See [deployment/distroless-troubleshooting](/deployment/distroless-troubleshooting) for detailed debugging guidance.
+</Note>
 
 ## 🚀 Your First Tasks
 

@@ -17,7 +17,15 @@ services:
     container_name: bytebot-desktop
     restart: unless-stopped
     hostname: computer
-    privileged: true
+    # Security: Replace privileged with minimal capabilities
+    cap_add:
+      - SYS_PTRACE      # Required for input simulation (uiohook-napi)
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    devices:
+      - /dev/dri:/dev/dri  # GPU access for rendering (optional)
     ports:
       - "9990:9990" # bytebotd service & noVNC
     environment:
@@ -32,13 +40,20 @@ services:
     ports:
       - "5432:5432"
     environment:
-      - POSTGRES_PASSWORD=postgres
-      - POSTGRES_USER=postgres
-      - POSTGRES_DB=bytebotdb
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:?Database password required - see .env.example}
+      - POSTGRES_USER=${POSTGRES_USER:-postgres}
+      - POSTGRES_DB=${POSTGRES_DB:-bytebotdb}
+    security_opt:
+      - no-new-privileges:true
     networks:
       - bytebot-network
     volumes:
       - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
 networks:
   bytebot-network:

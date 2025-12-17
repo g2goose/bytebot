@@ -136,11 +136,72 @@ kubectl get pods -n bytebot
 
 Expected output:
 ```
-NAME                              READY   STATUS    RESTARTS   AGE
-bytebot-agent-xxxxx               1/1     Running   0          2m
-bytebot-desktop-xxxxx             1/1     Running   0          2m
-bytebot-postgresql-0              1/1     Running   0          2m
-bytebot-ui-xxxxx                 1/1     Running   0          2m
+NAME                              READY   STATUS      RESTARTS   AGE
+bytebot-agent-xxxxx               1/1     Running     0          2m
+bytebot-agent-xxxxx-migrations    0/1     Completed   0          2m
+bytebot-desktop-xxxxx             1/1     Running     0          2m
+bytebot-postgresql-0              1/1     Running     0          2m
+bytebot-ui-xxxxx                  1/1     Running     0          2m
+```
+
+<Note>
+  The `bytebot-agent-xxxxx-migrations` init container runs Prisma database migrations before the agent starts. It should show `Completed` status.
+</Note>
+
+## Database Migrations
+
+Bytebot uses Prisma for database schema management. Migrations are handled automatically via Kubernetes init containers:
+
+### How Migrations Work
+
+1. **Init Container Runs First**: Before the agent pod starts, a migration init container executes
+2. **Schema Updates Applied**: Prisma migrations are applied to the PostgreSQL database
+3. **Agent Starts**: Only after successful migrations, the main agent container starts
+
+### Viewing Migration Status
+
+```bash
+# Check init container status
+kubectl get pods -n bytebot -l app.kubernetes.io/name=bytebot-agent
+
+# View migration logs
+kubectl logs -n bytebot <bytebot-agent-pod> -c migrations
+
+# If migrations fail, the pod will remain in Init:0/1 state
+```
+
+### Migration Failures
+
+If the init container fails:
+
+```bash
+# Get detailed error information
+kubectl describe pod -n bytebot <bytebot-agent-pod>
+kubectl logs -n bytebot <bytebot-agent-pod> -c migrations
+
+# Common issues:
+# - Database connection failed (check DATABASE_URL)
+# - Schema conflicts (manual intervention needed)
+# - Permission errors (check database user permissions)
+```
+
+<Warning>
+  The agent container **cannot** run migrations at runtime. This is a security feature of the distroless deployment - the application has no migration tooling available.
+</Warning>
+
+### Manual Migration Rollback
+
+If you need to rollback migrations:
+
+```bash
+# Scale down the agent deployment
+kubectl scale deployment -n bytebot bytebot-agent --replicas=0
+
+# Connect to PostgreSQL pod
+kubectl exec -it -n bytebot bytebot-postgresql-0 -- psql -U postgres
+
+# Manually restore database or drop schema
+# Then redeploy with correct migration state
 ```
 
 ## Troubleshooting
@@ -252,13 +313,13 @@ kubectl delete namespace bytebot
     # Network policies
     networkPolicy:
       enabled: true
-    
+
     # Pod security
     podSecurityContext:
       runAsNonRoot: true
       runAsUser: 1000
       fsGroup: 1000
-    
+
     # Enable authentication
     auth:
       enabled: true
@@ -266,6 +327,68 @@ kubectl delete namespace bytebot
       username: "admin"
       password: "changeme"  # Use secrets in production!
     ```
+  </Accordion>
+
+  <Accordion title="Distroless Security">
+    All Bytebot application services use Google's [distroless](https://github.com/GoogleContainerTools/distroless) container images for enhanced security:
+
+    **Security Features:**
+    - **No Shell Access**: Images contain only the application and runtime
+    - **Non-Root Execution**: All services run as UID 65532 (nonroot user)
+    - **Minimal Attack Surface**: No package managers or unnecessary binaries
+    - **Reduced CVEs**: Fewer packages means fewer vulnerabilities
+
+    **Operational Implications:**
+
+    ```bash
+    # You CANNOT exec into containers with a shell
+    kubectl exec -it bytebot-agent -- sh  # ❌ Will fail
+
+    # Instead, use these debugging methods:
+
+    # 1. View logs
+    kubectl logs -f bytebot-agent
+
+    # 2. Describe pod
+    kubectl describe pod bytebot-agent
+
+    # 3. Use a debug container (Kubernetes 1.23+)
+    kubectl debug -it bytebot-agent --image=busybox --target=bytebot-agent
+
+    # 4. Check running processes
+    kubectl exec bytebot-agent -- ps aux  # ❌ Will fail (no ps)
+    # Use kubectl top instead:
+    kubectl top pod bytebot-agent
+    ```
+
+    **Health Checks:**
+
+    Distroless images don't include health check utilities. Configure Kubernetes probes:
+
+    ```yaml
+    bytebot-agent:
+      livenessProbe:
+        httpGet:
+          path: /health
+          port: 9991
+        initialDelaySeconds: 30
+        periodSeconds: 10
+
+      readinessProbe:
+        httpGet:
+          path: /health
+          port: 9991
+        initialDelaySeconds: 5
+        periodSeconds: 5
+    ```
+
+    **Benefits:**
+    - 25-35% smaller image sizes
+    - Faster deployments
+    - Reduced attack surface
+    - Production-ready security posture
+
+    For detailed debugging guidance, see [distroless troubleshooting](/deployment/distroless-troubleshooting).
   </Accordion>
 </AccordionGroup>
 

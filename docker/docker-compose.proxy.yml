@@ -12,7 +12,15 @@ services:
     container_name: bytebot-desktop
     restart: unless-stopped
     hostname: computer
-    privileged: true
+    # Security: Replace privileged with minimal capabilities
+    cap_add:
+      - SYS_PTRACE      # Required for input simulation (uiohook-napi)
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    devices:
+      - /dev/dri:/dev/dri  # GPU access for rendering (optional)
     ports:
       - "9990:9990" # bytebotd service & noVNC
     environment:
@@ -27,18 +35,62 @@ services:
     ports:
       - "5432:5432"
     environment:
-      - POSTGRES_PASSWORD=postgres
-      - POSTGRES_USER=postgres
-      - POSTGRES_DB=bytebotdb
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:?Database password required - see .env.example}
+      - POSTGRES_USER=${POSTGRES_USER:-postgres}
+      - POSTGRES_DB=${POSTGRES_DB:-bytebotdb}
+    security_opt:
+      - no-new-privileges:true
     networks:
       - bytebot-network
     volumes:
       - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  python-sidecar:
+    build:
+      context: ../packages/
+      dockerfile: python-sidecar/Dockerfile
+    image: ghcr.io/bytebot-ai/python-sidecar:edge
+    container_name: python-sidecar
+    restart: unless-stopped
+    ports:
+      - "8766:8766"
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      - /tmp:size=100M,mode=1777
+    networks:
+      - bytebot-network
+
+  bytebot-agent-migrations:
+    build:
+      context: ../packages/
+      dockerfile: bytebot-agent/Dockerfile
+      target: migration-runner
+    image: ghcr.io/bytebot-ai/bytebot-agent-migrations:edge
+    container_name: bytebot-agent-migrations
+    environment:
+      - DATABASE_URL=${DATABASE_URL:-postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-bytebotdb}}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - bytebot-network
+    restart: "no"
+    command: ["/migrate.sh"]
 
   bytebot-agent:
     build:
       context: ../packages/
       dockerfile: bytebot-agent/Dockerfile
+      target: runtime
     # Use pre-built image
     image: ghcr.io/bytebot-ai/bytebot-agent:edge
     container_name: bytebot-agent
@@ -46,11 +98,24 @@ services:
     ports:
       - "9991:9991"
     environment:
-      - DATABASE_URL=${DATABASE_URL:-postgresql://postgres:postgres@postgres:5432/bytebotdb}
+      - DATABASE_URL=${DATABASE_URL:-postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-bytebotdb}}
       - BYTEBOT_DESKTOP_BASE_URL=${BYTEBOT_DESKTOP_BASE_URL:-http://bytebot-desktop:9990}
+      - PYTHON_SIDECAR_URL=${PYTHON_SIDECAR_URL:-http://python-sidecar:8766}
       - BYTEBOT_LLM_PROXY_URL=${BYTEBOT_LLM_PROXY_URL:-http://bytebot-llm-proxy:4000}
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      - /tmp:size=100M,mode=1777
     depends_on:
-      - postgres
+      postgres:
+        condition: service_healthy
+      bytebot-agent-migrations:
+        condition: service_completed_successfully
+      python-sidecar:
+        condition: service_started
     networks:
       - bytebot-network
 
@@ -64,6 +129,10 @@ services:
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       - GEMINI_API_KEY=${GEMINI_API_KEY}
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
     networks:
       - bytebot-network
 
@@ -84,6 +153,13 @@ services:
       - NODE_ENV=production
       - BYTEBOT_AGENT_BASE_URL=${BYTEBOT_AGENT_BASE_URL:-http://bytebot-agent:9991}
       - BYTEBOT_DESKTOP_VNC_URL=${BYTEBOT_DESKTOP_VNC_URL:-http://bytebot-desktop:9990/websockify}
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      - /tmp:size=100M,mode=1777
     depends_on:
       - bytebot-agent
     networks:

@@ -17,21 +17,21 @@
 [🌐 Website](https://bytebot.ai) • [📚 Documentation](https://docs.bytebot.ai) • [💬 Discord](https://discord.com/invite/d9ewZkWPTP) • [𝕏 Twitter](https://x.com/bytebot_ai)
 
 <!-- Keep these links. Translations will automatically update with the README. -->
-[Deutsch](https://zdoc.app/de/bytebot-ai/bytebot) | 
-[Español](https://zdoc.app/es/bytebot-ai/bytebot) | 
-[français](https://zdoc.app/fr/bytebot-ai/bytebot) | 
-[日本語](https://zdoc.app/ja/bytebot-ai/bytebot) | 
-[한국어](https://zdoc.app/ko/bytebot-ai/bytebot) | 
-[Português](https://zdoc.app/pt/bytebot-ai/bytebot) | 
-[Русский](https://zdoc.app/ru/bytebot-ai/bytebot) | 
+[Deutsch](https://zdoc.app/de/bytebot-ai/bytebot) |
+[Español](https://zdoc.app/es/bytebot-ai/bytebot) |
+[français](https://zdoc.app/fr/bytebot-ai/bytebot) |
+[日本語](https://zdoc.app/ja/bytebot-ai/bytebot) |
+[한국어](https://zdoc.app/ko/bytebot-ai/bytebot) |
+[Português](https://zdoc.app/pt/bytebot-ai/bytebot) |
+[Русский](https://zdoc.app/ru/bytebot-ai/bytebot) |
 [中文](https://zdoc.app/zh/bytebot-ai/bytebot)
 </div>
 
 ---
 
-https://github.com/user-attachments/assets/f271282a-27a3-43f3-9b99-b34007fdd169
+<https://github.com/user-attachments/assets/f271282a-27a3-43f3-9b99-b34007fdd169>
 
-https://github.com/user-attachments/assets/72a43cf2-bd87-44c5-a582-e7cbe176f37f
+<https://github.com/user-attachments/assets/72a43cf2-bd87-44c5-a582-e7cbe176f37f>
 
 ## What is a Desktop Agent?
 
@@ -93,15 +93,21 @@ Just click and add your AI provider API key.
 git clone https://github.com/bytebot-ai/bytebot.git
 cd bytebot
 
+# Configure environment (required)
+cat > docker/.env << EOF
+POSTGRES_PASSWORD=your_secure_password_here
 # Add your AI provider key (choose one)
-echo "ANTHROPIC_API_KEY=sk-ant-..." > docker/.env
-# Or: echo "OPENAI_API_KEY=sk-..." > docker/.env
-# Or: echo "GEMINI_API_KEY=..." > docker/.env
+ANTHROPIC_API_KEY=sk-ant-...
+# Or: OPENAI_API_KEY=sk-...
+# Or: GEMINI_API_KEY=...
+EOF
 
 docker-compose -f docker/docker-compose.yml up -d
 
 # Open http://localhost:9992
 ```
+
+All services run using Google's distroless container images for enhanced security with minimal attack surface.
 
 [Full deployment guide →](https://docs.bytebot.ai/quickstart)
 
@@ -236,6 +242,36 @@ Bytebot is built with:
 - **UI**: Next.js application for task management
 - **AI Support**: Works with Anthropic Claude, OpenAI GPT, Google Gemini
 - **Deployment**: Docker containers for easy self-hosting
+
+## Security Enhancements
+
+Bytebot prioritizes security with production-ready container images:
+
+### Distroless Containers
+
+All application services use Google's [distroless](https://github.com/GoogleContainerTools/distroless) base images:
+
+- **No Shell Access**: Images contain only the application and runtime dependencies
+- **Minimal Attack Surface**: No package managers, shells, or unnecessary binaries
+- **Non-Root Execution**: All services run as non-root user (UID 65532)
+- **Reduced CVE Exposure**: Fewer packages means fewer potential vulnerabilities
+- **Smaller Image Size**: 25-35% reduction compared to standard base images
+
+### Multi-Stage Builds
+
+All Dockerfiles use multi-stage builds to:
+
+- Separate build-time dependencies from runtime
+- Optimize layer caching for faster builds
+- Ensure only production dependencies are deployed
+
+### Database Security
+
+- Database migrations run in isolated init containers
+- Application has no migration tooling at runtime
+- All database credentials managed via environment variables
+
+These security measures make Bytebot suitable for production deployments handling sensitive data.
 
 ## Why Self-Host?
 

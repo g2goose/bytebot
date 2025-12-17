@@ -117,15 +117,47 @@ graph LR
 
 ## Security Architecture
 
+### Container Security (Distroless)
+
+All application services (agent, UI, python-sidecar) use Google's [distroless](https://github.com/GoogleContainerTools/distroless) container images for production-grade security:
+
+**Security Features:**
+- **No Shell Access**: Images contain only the application runtime and dependencies
+- **Non-Root Execution**: All services run as UID 65532 (nonroot user)
+- **Minimal Attack Surface**: No package managers, shells, or unnecessary binaries
+- **Reduced CVE Exposure**: Fewer packages means fewer vulnerabilities to patch
+- **Immutable Runtime**: No tools available to modify the running container
+
+**Image Size Comparison:**
+
+| Service | Previous Base | Distroless Base | Size Reduction |
+|---------|--------------|-----------------|----------------|
+| bytebot-agent | node:20-alpine | distroless/nodejs20 | ~28% smaller |
+| bytebot-ui | node:20-alpine | distroless/nodejs20 | ~32% smaller |
+| python-sidecar | python:3.11-slim | distroless/python3 | ~35% smaller |
+| bytebot-agent-cc | node:20-alpine | distroless/nodejs20 | ~30% smaller |
+
+**Multi-Stage Builds:**
+- Separate build stage (full tooling) from runtime stage (distroless)
+- Build dependencies never shipped to production
+- Optimized layer caching for faster CI/CD
+
+**Database Migrations:**
+- Prisma migrations run in isolated init containers (Kubernetes/Docker Compose)
+- Application has no migration tooling at runtime
+- Schema changes controlled and auditable
+
 ### Isolation Layers
 
 1. **Container Isolation**
    - Each desktop runs in its own Docker container
    - No access to host filesystem by default
    - Network isolation with explicit port mapping
+   - Application containers use distroless images (no shell)
 
 2. **Process Isolation**
    - bytebotd runs as non-root user
+   - All application services run as UID 65532
    - Separate processes for different services
    - Resource limits enforced by Docker
 

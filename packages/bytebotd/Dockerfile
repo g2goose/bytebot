@@ -201,7 +201,8 @@ WORKDIR /bytebot/bytebotd
 # 7. User setup and autologin configuration
 # -----------------------------------------------------------------------------
 # Create non-root user
-RUN useradd -ms /bin/bash user && echo "user ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers
+# Create non-root user (without passwordless sudo for security)
+RUN useradd -ms /bin/bash user
 
 RUN mkdir -p /var/run/dbus && \
     chmod 755 /var/run/dbus && \

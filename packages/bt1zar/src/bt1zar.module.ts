@@ -60,9 +60,15 @@ import { ToolManagerManagedAgent } from './agents/managed/tool-manager.agent';
       },
       inject: ['DEFAULT_PROJECT_ISOLATION'],
     },
+    // Provider alias for tasks gateway integration
+    {
+      provide: 'ORCHESTRATOR_SERVICE',
+      useExisting: OrchestratorService,
+    },
   ],
   exports: [
     OrchestratorService,
+    'ORCHESTRATOR_SERVICE',
     PythonSecurityBridge,
     'DEFAULT_PROJECT_ISOLATION',
     FileSystemManagedAgent,
